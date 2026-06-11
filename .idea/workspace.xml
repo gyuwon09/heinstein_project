@@ -4,7 +4,9 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="b558a26e-81f2-4328-b92c-d898f688aa1c" name="변경" comment="update few func">
+    <list default="true" id="b558a26e-81f2-4328-b92c-d898f688aa1c" name="변경" comment="">
+      <change afterPath="$PROJECT_DIR$/.env" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
     </list>
@@ -82,11 +84,20 @@
       <option name="project" value="LOCAL" />
       <updated>1780759258932</updated>
     </task>
-    <option name="localTasksCounter" value="2" />
+    <task id="LOCAL-00002" summary="update crop_suitability_prediction">
+      <option name="closed" value="true" />
+      <created>1780761222066</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1780761222066</updated>
+    </task>
+    <option name="localTasksCounter" value="3" />
     <servers />
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="update few func" />
-    <option name="LAST_COMMIT_MESSAGE" value="update few func" />
+    <MESSAGE value="update crop_suitability_prediction" />
+    <option name="LAST_COMMIT_MESSAGE" value="update crop_suitability_prediction" />
   </component>
 </project>
