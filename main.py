@@ -19,6 +19,8 @@ from starlette.responses import HTMLResponse
 # API 호출 속도를 제어하기 위한 세마포어 (서버 차단 방지)
 sem = asyncio.Semaphore(1)
 
+dotenv.load_dotenv()
+
 # API 클라이언트 초기화 (API 키 입력)
 client = openai.OpenAI(
     api_key=os.getenv("openai_api")
@@ -115,11 +117,27 @@ async def fetch_soil_data(client: httpx.AsyncClient, lat, lon):
                 print(f"[A] fetch_soil_data 수신됨. {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
                 res_json = response.json()
-                layers = res_json["properties"]["layers"]
+                layers = res_json.get("properties", {}).get("layers", [])
 
-                # API 응답 구조 레이어 인덱스로 직접 타겟팅 (순서: phh2o, nitrogen)
-                ph_val = layers[0]["depths"][0]["values"]["mean"] / 10
-                n_val = layers[1]["depths"][0]["values"]["mean"] / 10
+                # 레이어가 정상적으로 들어왔는지 안전하게 검사
+                if len(layers) < 2:
+                    print(f"[E] SoilGrids API 응답 레이어가 부족합니다. (데이터 공백 지역 가능성)")
+                    return None
+
+                # --------------------------------------------------------
+                # 💡 안전한 데이터 추출 및 None 검사 (에러 방지 핵심 구간)
+                # --------------------------------------------------------
+                ph_raw = layers[0]["depths"][0]["values"]["mean"]
+                n_raw = layers[1]["depths"][0]["values"]["mean"]
+
+                # 데이터가 None이면 기본값(예: 데이터셋의 평균적인 값)을 주거나 None 처리
+                if ph_raw is None or n_raw is None:
+                    print(f"[W] 해당 좌표({lat}, {lon})의 토양 성분 중 일부가 None입니다. 기본값으로 대체합니다.")
+                    ph_val = 6.5 if ph_raw is None else ph_raw / 10
+                    n_val = 50.0 if n_raw is None else n_raw / 10
+                else:
+                    ph_val = ph_raw / 10
+                    n_val = n_raw / 10
 
                 return {"phh2o": ph_val, "nitrogen": n_val}
 
@@ -129,7 +147,6 @@ async def fetch_soil_data(client: httpx.AsyncClient, lat, lon):
         except Exception as e:
             print(f"[E] fetch_soil_data 내부 예외 발생: {type(e).__name__} - {e}")
             return None
-
 
 async def get_nasa_power_data(client: httpx.AsyncClient, lat, lon):
     """
