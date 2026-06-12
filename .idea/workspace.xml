@@ -4,8 +4,9 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="b558a26e-81f2-4328-b92c-d898f688aa1c" name="변경" comment="test update">
+    <list default="true" id="b558a26e-81f2-4328-b92c-d898f688aa1c" name="변경" comment="what">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -97,13 +98,22 @@
       <option name="project" value="LOCAL" />
       <updated>1781191947724</updated>
     </task>
-    <option name="localTasksCounter" value="4" />
+    <task id="LOCAL-00004" summary="what">
+      <option name="closed" value="true" />
+      <created>1781257763994</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1781257763994</updated>
+    </task>
+    <option name="localTasksCounter" value="5" />
     <servers />
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="update few func" />
     <MESSAGE value="update crop_suitability_prediction" />
     <MESSAGE value="test update" />
-    <option name="LAST_COMMIT_MESSAGE" value="test update" />
+    <MESSAGE value="what" />
+    <option name="LAST_COMMIT_MESSAGE" value="what" />
   </component>
 </project>

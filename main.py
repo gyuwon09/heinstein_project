@@ -97,73 +97,106 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
-# ==========================================
-# 3. 비동기 외부 API 연동 함수 정의 (의존성 주입)
-# ==========================================
 async def fetch_soil_data(client: httpx.AsyncClient, lat, lon):
     """
     인자로 주입된 httpx.AsyncClient를 사용하여
     ISRIC SoilGrids API를 통해 토양 산도(pH)와 질소 함량(nitrogen)을 가져옵니다.
+
+    데이터가 없거나(None) 비정상 응답인 경우 예외 처리 후 None 반환
     """
     async with sem:
         url = "https://rest.isric.org/soilgrids/v2.0/properties/query"
-        params = {"lon": lon, "lat": lat, "property": ["phh2o", "nitrogen"]}
+        params = {
+            "lon": lon,
+            "lat": lat,
+            "property": ["phh2o", "nitrogen"]
+        }
 
         try:
-            response = await client.get(url, params=params, timeout=30.0)
-            await asyncio.sleep(0.2)  # 요청 직후 매너 타임
+            response = await client.get(
+                url,
+                params=params,
+                timeout=30.0
+            )
 
-            if response.status_code == 200:
-                print(f"[A] fetch_soil_data 수신됨. {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            await asyncio.sleep(0.2)  # 매너 타임
 
-                res_json = response.json()
-                layers = res_json.get("properties", {}).get("layers", [])
+            if response.status_code != 200:
+                raise RuntimeError(
+                    f"SoilGrids API 상태코드 오류: {response.status_code}"
+                )
 
-                # 레이어가 정상적으로 들어왔는지 안전하게 검사
-                if len(layers) < 2:
-                    print(f"[E] SoilGrids API 응답 레이어가 부족합니다. (데이터 공백 지역 가능성)")
-                    return None
+            print(
+                f"[A] fetch_soil_data 수신됨. "
+                f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            )
 
-                # --------------------------------------------------------
-                # 💡 안전한 데이터 추출 및 None 검사 (에러 방지 핵심 구간)
-                # --------------------------------------------------------
+            res_json = response.json()
+
+            layers = (
+                res_json
+                .get("properties", {})
+                .get("layers", [])
+            )
+
+            if len(layers) < 2:
+                raise ValueError(
+                    f"SoilGrids API 응답 레이어 부족 (layers={len(layers)})"
+                )
+
+            # 안전하게 값 추출
+            try:
                 ph_raw = layers[0]["depths"][0]["values"]["mean"]
                 n_raw = layers[1]["depths"][0]["values"]["mean"]
+            except (KeyError, IndexError, TypeError) as e:
+                raise ValueError(
+                    f"SoilGrids 응답 구조가 예상과 다릅니다: {e}"
+                )
 
-                # 데이터가 None이면 기본값(예: 데이터셋의 평균적인 값)을 주거나 None 처리
-                if ph_raw is None or n_raw is None:
-                    print(f"[W] 해당 좌표({lat}, {lon})의 토양 성분 중 일부가 None입니다. 기본값으로 대체합니다.")
-                    ph_val = 6.5 if ph_raw is None else ph_raw / 10
-                    n_val = 50.0 if n_raw is None else n_raw / 10
-                else:
-                    ph_val = ph_raw / 10
-                    n_val = n_raw / 10
+            # None 값은 오류 처리
+            if ph_raw is None:
+                raise ValueError(
+                    f"SoilGrids phh2o 값이 None입니다. ({lat}, {lon})"
+                )
 
-                return {"phh2o": ph_val, "nitrogen": n_val}
+            if n_raw is None:
+                raise ValueError(
+                    f"SoilGrids nitrogen 값이 None입니다. ({lat}, {lon})"
+                )
 
-            print(f"[E] fetch_soil_data 에러 상태코드: {response.status_code}")
-            return None
+            ph_val = ph_raw / 10
+            n_val = n_raw / 10
+
+            return {
+                "phh2o": ph_val,
+                "nitrogen": n_val
+            }
 
         except Exception as e:
-            print(f"[E] fetch_soil_data 내부 예외 발생: {type(e).__name__} - {e}")
+            print(
+                f"[E] fetch_soil_data 내부 예외 발생: "
+                f"{type(e).__name__} - {e}"
+            )
             return None
+
 
 async def get_nasa_power_data(client: httpx.AsyncClient, lat, lon):
     """
-    인자로 주입된 httpx.AsyncClient를 사용하여
-    NASA POWER API로부터 평균 기온과 총 강수량을 가져옵니다.
+    NASA POWER API의 'monthly' 시계열을 호출하여,
+    최근 1개년의 연평균 기온(T2M)과 연간 총 강수량(PRECTOTCORR)을 계산합니다.
     """
-    url = "https://power.larc.nasa.gov/api/temporal/daily/point"
+    # 월별 데이터 API 주소
+    url = "https://power.larc.nasa.gov/api/temporal/monthly/point"
     parameters = "T2M,PRECTOTCORR"
 
-    today = datetime.today()
-    four_days_ago = today - timedelta(days=4)
-    six_days_ago = today - timedelta(days=10)
+    # 현재 연도 기준으로 작년(완전한 데이터가 있는 최근 연도) 데이터를 조회
+    current_year = datetime.today().year
+    target_year = current_year - 1  # 예: 2026년 기준 2025년 데이터 조회
 
-    start = six_days_ago.strftime("%Y%m%d")
-    end = four_days_ago.strftime("%Y%m%d")
+    start = str(target_year)
+    end = str(target_year)
 
-    print(f"[P] NASA 데이터 조회 기간: {six_days_ago.strftime('%Y-%m-%d')} ~ {four_days_ago.strftime('%Y-%m-%d')}")
+    print(f"[P] NASA 데이터 조회 연도 (연평균/연강수량 산출): {target_year}년")
 
     query_params = {
         "parameters": parameters,
@@ -182,23 +215,39 @@ async def get_nasa_power_data(client: httpx.AsyncClient, lat, lon):
         data = response.json()
         parameter_data = data.get('properties', {}).get('parameter', {})
 
-        temperature_dict = parameter_data.get('T2M', {})
-        precipitation_dict = parameter_data.get('PRECTOTCORR', {})
+        # NASA Monthly API는 1월~12월 데이터와 연간평균/합산 데이터(13번째 데이터)를 함께 줍니다.
+        # 안전하게 1월~12월(YYYY01 ~ YYYY12) 데이터만 추출하여 평균과 합산을 구합니다.
+        t2m_data = parameter_data.get('T2M', {})
+        precip_data = parameter_data.get('PRECTOTCORR', {})
 
-        if temperature_dict:
-            avg_temp = round(sum(temperature_dict.values()) / len(temperature_dict), 2)
-            total_precip = round(sum(precipitation_dict.values()), 2)
-            print(f"[A] NASA 호출 완료. 평균 기온: {avg_temp}°C, 총 강수량: {total_precip} mm")
+        # 연간 데이터(YYYY13)나 무효값(-999)을 제외한 1~12월 실제 데이터 필터링
+        valid_temps = [v for k, v in t2m_data.items() if k.endswith(
+            ('01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12')) and v != -999]
+        valid_precips = [v for k, v in precip_data.items() if k.endswith(
+            ('01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12')) and v != -999]
 
-            return {
-                "avg_temp": avg_temp,
-                "total_precip": total_precip
-            }
+        if not valid_temps or not valid_precips:
+            raise ValueError("NASA로부터 유효한 월별 기후 데이터를 받지 못했습니다.")
+
+            # 1. 연평균 기온 계산 (12개월 데이터의 평균)
+        avg_temp = round(sum(valid_temps) / len(valid_temps), 2)
+
+        # 2. 연간 총 강수량 계산 (★수정된 부분★)
+        # NASA Monthly API의 PRECTOTCORR은 이미 '월간 총 강수량(mm/month)'입니다.
+        # 따라서 12개월의 값을 모두 더하면 바로 '연간 총 강수량(mm/year)'이 됩니다.
+        total_precip = round(sum(valid_precips), 2)
+
+        print(f"[A] NASA 통계 산출 완료 -> 연평균 기온: {avg_temp}°C, 연 강수량: {total_precip} mm")
+
+        return {
+            "avg_temp": avg_temp,
+            "total_precip": total_precip
+        }
+
     except Exception as e:
-        print(f"[E] NASA API 요청 중 오류 발생: {e}")
+        print(f"[E] NASA API 요청 또는 데이터 가공 중 오류 발생: {e}")
 
     return None
-
 
 # ==========================================
 # 4. FastAPI 비동기 추천 라우터
@@ -209,61 +258,117 @@ async def crop_suitability_prediction(request: Request, lat: float, lon: float):
     요청(request) 객체에서 lifespan 인스턴스를 추출하여 하부 API 함수에 명시적으로 인자를 주입합니다.
     이를 통해 스코프 불일치로 인한 None 인식 버그를 물리적으로 제거합니다.
     """
-    # lifespan 과정에서 앱 자체에 등록해 둔 비동기 httpx 클라이언트 추출
-    api_client = request.app.state.client
 
-    # 두 외부 API 요청에 안전한 컨텍스트 인스턴스를 바인딩하고 병렬 스케줄링 실행
-    nasa_task = get_nasa_power_data(api_client, lat, lon)
-    soil_task = fetch_soil_data(api_client, lat, lon)
+    try:
+        # lifespan 과정에서 앱 자체에 등록해 둔 비동기 httpx 클라이언트 추출
+        api_client = request.app.state.client
 
-    nasa_data, soil_data = await asyncio.gather(nasa_task, soil_task)
+        # 두 외부 API 요청 병렬 실행
+        nasa_task = get_nasa_power_data(api_client, lat, lon)
+        soil_task = fetch_soil_data(api_client, lat, lon)
 
-    # 데이터 누락 예외 처리
-    if not nasa_data or not soil_data:
-        return {"status": "error", "message": "외부 기후 및 토양 데이터를 통합 수집하지 못했습니다. 서버 콘솔 창의 에러 원인을 파악하세요."}
+        nasa_data, soil_data = await asyncio.gather(
+            nasa_task,
+            soil_task
+        )
 
-    temp = nasa_data.get("avg_temp")
-    precip = nasa_data.get("total_precip") * 10  # ML 데이터셋 스케일에 최적화하도록 가중치 보정
-    phh2o = soil_data.get("phh2o")
-    nitrogen = soil_data.get("nitrogen")
+        # 데이터 누락 예외 처리
+        if not nasa_data or not soil_data:
+            return {
+                "status": "error",
+                "message": "이용할 수 없는 지역입니다."
+            }
 
-    if None in [temp, precip, phh2o, nitrogen]:
-        return {"status": "error", "message": "외부 API로부터 유효한 인자 환경 성분을 채우지 못해 계산을 중단합니다."}
+        # 라우터 내부 수정 (스케일링 제거)
+        temp = nasa_data.get("avg_temp")
+        precip = nasa_data.get("total_precip")  # 기존의 '* 10' 제거! NASA에서 가공된 연총량 그대로 사용
+        phh2o = soil_data.get("phh2o")
+        nitrogen = soil_data.get("nitrogen")
 
-    # 머신러닝 예측 파이프라인
-    print("\n--- 실시간 수집 데이터 기반 최종 머신러닝 추론 시작 ---")
-    custom_data = [[nitrogen, temp, phh2o, precip]]
-    custom_df = pd.DataFrame(custom_data, columns=features)
+        if None in [temp, precip, phh2o, nitrogen]:
+            return {
+                "status": "error",
+                "message": "현재 지역은 시가지 및 수중 구역으로, 토양 정보 조회 대상이 아닙니다. 문제가 해결되지 않는다면, 잠시후 다시 시도해주시기 바랍니다."
+            }
 
-    predicted_crop = model.predict(custom_df)[0]
-    pred_probabilities = model.predict_proba(custom_df)[0]
+        # 머신러닝 예측 파이프라인
+        print("\n--- 실시간 수집 데이터 기반 최종 머신러닝 추론 시작 ---")
 
-    # 작물별 추천 매칭 세부율 정렬
-    match_df = pd.DataFrame({
-        '작물 (Crop)': model.classes_,
-        '추천 적합도 (Match %)': np.round(pred_probabilities * 100, 2)
-    })
-    match_df = match_df.sort_values(by='추천 적합도 (Match %)', ascending=False).reset_index(drop=True)
+        custom_data = [[
+            nitrogen,
+            temp,
+            phh2o,
+            precip
+        ]]
 
-    # 터미널 로깅 데이터 출력
-    print(f"입력된 토양/기후 데이터(N, Temp, pH, Rain): {custom_data[0]}")
-    print(f"이 환경에 가장 어울리는 최적의 추천 작물은? : [{predicted_crop.upper()}] 입니다.\n")
-    print(match_df.to_string(index=False, float_format=lambda x: f"{x:.2f}%"))
+        custom_df = pd.DataFrame(
+            custom_data,
+            columns=features
+        )
 
-    # 브라우저 결과 JSON 출력 반환
-    return {
-        "status": "success",
-        "input_environment": {
-            "latitude": lat,
-            "longitude": lon,
-            "nitrogen_actual": nitrogen,
-            "temperature_avg": temp,
-            "ph": phh2o,
-            "rainfall_scaled": precip
-        },
-        "best_recommended_crop": predicted_crop.upper(),
-        "suitability_details": match_df.to_dict(orient="records")
-    }
+        predicted_crop = model.predict(custom_df)[0]
+        pred_probabilities = model.predict_proba(custom_df)[0]
+
+        # 작물별 추천 매칭 세부율 정렬
+        match_df = pd.DataFrame({
+            '작물 (Crop)': model.classes_,
+            '추천 적합도 (Match %)': np.round(pred_probabilities * 100, 2)
+        })
+
+        match_df = (
+            match_df
+            .sort_values(
+                by='추천 적합도 (Match %)',
+                ascending=False
+            )
+            .reset_index(drop=True)
+        )
+
+        # # 터미널 로깅 데이터 출력
+        # print(
+        #     f"입력된 토양/기후 데이터(N, Temp, pH, Rain): "
+        #     f"{custom_data[0]}"
+        # )
+        #
+        # print(
+        #     f"이 환경에 가장 어울리는 최적의 추천 작물은? : "
+        #     f"[{predicted_crop.upper()}] 입니다.\n"
+        # )
+        #
+        # print(
+        #     match_df.to_string(
+        #         index=False,
+        #         float_format=lambda x: f"{x:.2f}%"
+        #     )
+        # )
+
+        # 브라우저 결과 JSON 반환
+        return {
+            "status": "success",
+            "input_environment": {
+                "latitude": lat,
+                "longitude": lon,
+                "nitrogen_actual": nitrogen,
+                "temperature_avg": temp,
+                "ph": phh2o,
+                "rainfall_scaled": precip
+            },
+            "best_recommended_crop": predicted_crop.upper(),
+            "suitability_details": match_df.to_dict(
+                orient="records"
+            )
+        }
+
+    except Exception as e:
+        print(
+            f"[E] crop_suitability_prediction 예외 발생: "
+            f"{type(e).__name__} - {e}"
+        )
+
+        return {
+            "status": "error",
+            "message": "이용할 수 없는 지역입니다."
+        }
 
 
 # ==========================================
@@ -498,7 +603,6 @@ async def main():
             <svg viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="6" fill="#1b8a4c"/><path d="M12 17v-5m0 0c0-2.5 1.8-4.5 4.5-4.5 0 2.5-1.8 4.5-4.5 4.5Zm0 0c0-2-1.5-3.6-3.6-3.6 0 2 1.5 3.6 3.6 3.6Z" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
             21세기 농사직설
           </div>
-          <div class="nav-step"><span class="now">1 시작</span><span class="sep">·</span><span>2 위치 선택</span><span class="sep">·</span><span>3 추천 결과</span></div>
         </div>
       </header>
 
@@ -548,7 +652,6 @@ async def main():
             <svg viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="6" fill="#1b8a4c"/><path d="M12 17v-5m0 0c0-2.5 1.8-4.5 4.5-4.5 0 2.5-1.8 4.5-4.5 4.5Zm0 0c0-2-1.5-3.6-3.6-3.6 0 2 1.5 3.6 3.6 3.6Z" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
             21세기 농사직설
           </div>
-          <div class="nav-step"><span>1 시작</span><span class="sep">·</span><span class="now">2 위치 선택</span><span class="sep">·</span><span>3 추천 결과</span></div>
         </div>
       </header>
 
@@ -585,7 +688,6 @@ async def main():
             <svg viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="6" fill="#1b8a4c"/><path d="M12 17v-5m0 0c0-2.5 1.8-4.5 4.5-4.5 0 2.5-1.8 4.5-4.5 4.5Zm0 0c0-2-1.5-3.6-3.6-3.6 0 2 1.5 3.6 3.6 3.6Z" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
             21세기 농사직설
           </div>
-          <div class="nav-step"><span>1 시작</span><span class="sep">·</span><span>2 위치 선택</span><span class="sep">·</span><span class="now">3 추천 결과</span></div>
         </div>
       </header>
 
@@ -734,23 +836,24 @@ async def main():
     // 비동기 AI 머신러닝 추론 데이터 요청 
     async function requestPrediction() {
       if(!selectedLat || !selectedLon) return;
-
+    
       const loadingMask = document.getElementById('mapLoading');
       loadingMask.style.display = 'grid';
-
+    
       try {
         const response = await fetch(`/predict/${selectedLat}/${selectedLon}`);
         const data = await response.json();
-
+    
         if (data.status === 'success') {
           renderResults(data);
           go('result');
         } else {
-          alert("에러가 발생했습니다: " + data.message);
+          alert(data.message);
         }
+    
       } catch (err) {
         console.error(err);
-        alert("서버 통신 중 장애가 발생했습니다.");
+        alert("이용할 수 없는 지역입니다.");
       } finally {
         loadingMask.style.display = 'none';
       }
