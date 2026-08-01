@@ -1,0 +1,10 @@
+{
+  "header" : {
+    "resultCode" : "30",
+    "resultMsg" : "SERVICE_KEY_IS_NOT_REGISTERED_ERROR",
+    "errorMsg" : "등록되지 않은 서비스키"
+  },
+  "body" : {
+    "items" : { }
+  }
+}
